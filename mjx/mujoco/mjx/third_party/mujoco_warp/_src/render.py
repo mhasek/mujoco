@@ -173,6 +173,11 @@ def cast_ray(
         ray_origin_world,
         ray_dir_world,
       )
+      # Backface cull: drop exit-face hits when the ray origin is inside, matching
+      # ray_mesh_with_bvh's `dot(lvec, n) < 0` rule. Returned normals are world-space
+      # outward normals, so `dot(ray_dir, n) >= 0` flags a back-facing hit.
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.ELLIPSOID:
       d, n = ray_ellipsoid(
         geom_xpos_in[worldid, gi],
@@ -181,6 +186,8 @@ def cast_ray(
         ray_origin_world,
         ray_dir_world,
       )
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.CAPSULE:
       d, n = ray_capsule(
         geom_xpos_in[worldid, gi],
@@ -189,6 +196,8 @@ def cast_ray(
         ray_origin_world,
         ray_dir_world,
       )
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.CYLINDER:
       d, n = ray_cylinder(
         geom_xpos_in[worldid, gi],
@@ -197,6 +206,8 @@ def cast_ray(
         ray_origin_world,
         ray_dir_world,
       )
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.BOX:
       d, all, n = ray_box(
         geom_xpos_in[worldid, gi],
@@ -205,6 +216,8 @@ def cast_ray(
         ray_origin_world,
         ray_dir_world,
       )
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.MESH:
       d, n, u, v, f, hit_mesh_id = ray_mesh_with_bvh(
         mesh_bvh_id,
@@ -328,6 +341,9 @@ def cast_ray_first_hit(
         ray_origin_world,
         ray_dir_world,
       )
+      # Backface cull: see cast_ray for rationale.
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.ELLIPSOID:
       d, n = ray_ellipsoid(
         geom_xpos_in[worldid, gi],
@@ -336,6 +352,8 @@ def cast_ray_first_hit(
         ray_origin_world,
         ray_dir_world,
       )
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.CAPSULE:
       d, n = ray_capsule(
         geom_xpos_in[worldid, gi],
@@ -344,6 +362,8 @@ def cast_ray_first_hit(
         ray_origin_world,
         ray_dir_world,
       )
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.CYLINDER:
       d, n = ray_cylinder(
         geom_xpos_in[worldid, gi],
@@ -352,6 +372,8 @@ def cast_ray_first_hit(
         ray_origin_world,
         ray_dir_world,
       )
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.BOX:
       d, all, n = ray_box(
         geom_xpos_in[worldid, gi],
@@ -360,6 +382,8 @@ def cast_ray_first_hit(
         ray_origin_world,
         ray_dir_world,
       )
+      if d >= 0.0 and wp.dot(ray_dir_world, n) >= 0.0:
+        d = -1.0
     if gtype == GeomType.MESH:
       hit = ray_mesh_with_bvh_anyhit(
         mesh_bvh_id,

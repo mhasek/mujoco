@@ -244,6 +244,50 @@ class RenderTest(parameterized.TestCase):
     np.testing.assert_array_equal(seg, ref_seg)
     self.assertTrue(np.any(seg != -1))
 
+  @parameterized.product(
+      shape=('sphere', 'ellipsoid', 'capsule', 'cylinder', 'box'),
+  )
+  def test_backface_cull_camera_inside_primitive(self, shape: str):
+    """Camera inside a primitive must not render that primitive's back face.
+
+    Mirrors MuJoCo's mesh ray rule (`dot(lvec, n) < 0`) for primitives: an
+    exit-face hit (ray going outward through the surface) is dropped, so a ray
+    originating inside a primitive sees through it. Without this cull, the
+    enclosing geom would fill the frame with its back wall.
+    """
+    self._maybe_skip()
+    xml = f'backface_cull/{shape}.xml'
+    m = tu.load_test_file(xml)
+    enclosure_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, 'enclosure')
+    marker_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, 'marker')
+    self.assertGreaterEqual(enclosure_id, 0)
+    self.assertGreaterEqual(marker_id, 0)
+
+    mx, dx_batch, rc = _get_model_data_rc(xml, batch_size=1, render_seg=True)
+    dx_batch = jax.jit(mjx.refit_bvh)(mx, dx_batch, rc.pytree())
+    out_batch = jax.jit(mjx.render_with_segmentation)(
+        mx, dx_batch, rc.pytree()
+    )
+
+    seg = jax.vmap(mjx.get_segmentation, in_axes=(None, None, 0))(
+        rc.pytree(), 0, out_batch[2]
+    )
+    seg = np.asarray(seg)[0]
+
+    # Enclosing primitive should be fully backface-culled: every ray originates
+    # inside it, so every hit against it is an exit-face hit.
+    self.assertFalse(
+        np.any(seg == enclosure_id),
+        f'enclosing {shape} should be backface-culled but appeared in segmentation',
+    )
+
+    # The marker box sits in front of the camera, well outside the enclosure;
+    # at least one ray should reach it.
+    self.assertTrue(
+        np.any(seg == marker_id),
+        f'camera inside {shape} should see through to the marker box',
+    )
+
 
 class RenderContextGarbageCollectionTest(absltest.TestCase):
   """Tests that RenderContext cleans up buffers on deletion."""
