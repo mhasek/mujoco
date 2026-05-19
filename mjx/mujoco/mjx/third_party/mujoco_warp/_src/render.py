@@ -520,35 +520,52 @@ def compute_lighting(
   lightcastshadow: bool,
   lightpos: wp.vec3,
   lightdir: wp.vec3,
+  lightatten: wp.vec3,
+  lightcutoff_rad: float,
+  lightexp: float,
+  lightdiff: wp.vec3,
+  lightspec: wp.vec3,
   normal: wp.vec3,
   hitpoint: wp.vec3,
+  view_dir: wp.vec3,
+  mat_spec: float,
+  mat_shin_exp: float,
   cull_backfaces: bool,
-) -> float:
-  light_contribution = float(0.0)
+  enable_specular: bool,
+  default_attenuation: bool,
+  has_spot: bool,
+) -> Tuple[wp.vec3, wp.vec3]:
+  zero = wp.vec3(0.0, 0.0, 0.0)
+  diff_rgb = zero
+  spec_rgb = zero
 
   # TODO: We should probably only be looping over active lights
   # in the first place with a static loop of enabled light idx?
   if not lightactive:
-    return light_contribution
+    return diff_rgb, spec_rgb
 
   L = wp.vec3(0.0, 0.0, 0.0)
   dist_to_light = float(MJ_MAXVAL)
-  attenuation = float(1.0)
+  atten = float(1.0)
 
   if lighttype == 1:  # directional light
-    L = wp.normalize(-lightdir)
+    L = -lightdir
   else:
     L, dist_to_light = math.normalize_with_norm(lightpos - hitpoint)
-    attenuation = 1.0 / (1.0 + 0.02 * dist_to_light * dist_to_light)
-    if lighttype == 0:  # spot light
-      spot_dir = wp.normalize(lightdir)
-      cos_theta = wp.dot(-L, spot_dir)
-      spot_factor = wp.min(1.0, wp.max(0.0, (cos_theta - 0.85) / (0.95 - 0.85)))
-      attenuation = attenuation * spot_factor
+    if not default_attenuation:
+      denom = lightatten[0] + lightatten[1] * dist_to_light + lightatten[2] * dist_to_light * dist_to_light
+      atten = 1.0 / wp.max(denom, 1.0e-6)
+    if has_spot:
+      if lighttype == 0:  # spot light
+        cos_theta = wp.dot(-L, lightdir)
+        cos_cutoff = wp.cos(lightcutoff_rad)
+        if cos_theta < cos_cutoff:
+          return diff_rgb, spec_rgb
+        atten = atten * wp.pow(wp.max(cos_theta, 0.0), lightexp)
 
   ndotl = wp.max(0.0, wp.dot(normal, L))
   if ndotl == 0.0:
-    return light_contribution
+    return diff_rgb, spec_rgb
 
   visible = float(1.0)
 
@@ -591,9 +608,17 @@ def compute_lighting(
     )
 
     if shadow_hit:
-      visible = 0.3
+      visible = 0.0
 
-  return ndotl * attenuation * visible
+  weight = atten * visible
+  diff_rgb = lightdiff * (ndotl * weight)
+  if enable_specular:
+    if mat_spec > 0.0 and mat_shin_exp > 0.0:
+      H = wp.normalize(L + view_dir)
+      ndoth = wp.max(0.0, wp.dot(normal, H))
+      spec_rgb = lightspec * (mat_spec * wp.pow(ndoth, mat_shin_exp) * weight)
+
+  return diff_rgb, spec_rgb
 
 
 @event_scope
@@ -626,12 +651,21 @@ def render(m: Model, d: Data, rc: RenderContext):
     light_type: wp.array2d[int],
     light_castshadow: wp.array2d[bool],
     light_active: wp.array2d[bool],
+    light_attenuation: wp.array[wp.vec3],
+    light_cutoff: wp.array[float],
+    light_exponent: wp.array[float],
+    light_ambient: wp.array[wp.vec3],
+    light_diffuse: wp.array[wp.vec3],
+    light_specular: wp.array[wp.vec3],
     flex_vertadr: wp.array[int],
     flex_edge: wp.array[wp.vec2i],
     flex_radius: wp.array[float],
     mesh_faceadr: wp.array[int],
     mat_texid: wp.array3d[int],
     mat_texrepeat: wp.array2d[wp.vec2],
+    mat_emission: wp.array[float],
+    mat_specular: wp.array[float],
+    mat_shininess: wp.array[float],
     mat_rgba: wp.array2d[wp.vec4],
     # Data in:
     geom_xpos_in: wp.array2d[wp.vec3],
@@ -715,8 +749,9 @@ def render(m: Model, d: Data, rc: RenderContext):
         wp.static(rc.znear),
       )
 
-    ray_dir_world = cam_xmat_in[worldid, mujoco_cam_id] @ ray_dir_local_cam
     ray_origin_world = cam_xpos_in[worldid, mujoco_cam_id]
+    cam_mat_world = cam_xmat_in[worldid, mujoco_cam_id]
+    ray_dir_world = cam_mat_world @ ray_dir_local_cam
 
     geom_id, dist, normal, u, v, f, mesh_id = cast_ray(
       geom_type,
@@ -789,7 +824,6 @@ def render(m: Model, d: Data, rc: RenderContext):
       color = mat_rgba[worldid % mat_rgba.shape[0], geom_matid[worldid % geom_matid.shape[0], geom_id]]
 
     base_color = wp.vec3(color[0], color[1], color[2])
-    hit_color = base_color
 
     if wp.static(rc.use_textures):
       if geom_id != -2:
@@ -816,18 +850,39 @@ def render(m: Model, d: Data, rc: RenderContext):
             )
             base_color = wp.cw_mul(base_color, tex_color)
 
-    result = wp.vec3(0.0, 0.0, 0.0)
-    if wp.static(rc.use_ambient_lighting):
-      len_n = wp.length(normal)
-      n = normal if len_n > 0.0 else wp.vec3(0.0, 0.0, 1.0)
-      n = wp.normalize(n)
-      hemispheric = 0.5 * (n[2] + 1.0)
-      ambient_color = wp.vec3(0.4, 0.4, 0.45) * hemispheric + wp.vec3(0.1, 0.1, 0.12) * (1.0 - hemispheric)
-      result = 0.5 * wp.cw_mul(base_color, ambient_color)
+    mat_spec = float(0.5)
+    mat_shin_exp = float(0.5 * 128.0)
+    mat_emis = float(0.0)
+    if wp.static(rc.enable_specular or rc.enable_emission):
+      if geom_id != -2:
+        mat_id_for_spec = geom_matid[worldid % geom_matid.shape[0], geom_id]
+        if mat_id_for_spec >= 0:
+          if wp.static(rc.enable_specular):
+            mat_spec = mat_specular[mat_id_for_spec]
+            mat_shin_exp = mat_shininess[mat_id_for_spec] * 128.0
+          if wp.static(rc.enable_emission):
+            mat_emis = mat_emission[mat_id_for_spec]
 
-    # Apply lighting and shadows
+    result = wp.vec3(0.0, 0.0, 0.0)
+    if wp.static(rc.enable_emission):
+      result = base_color * mat_emis
+
+    if wp.static(rc.use_ambient_lighting):
+      if wp.static(rc.headlight_active):
+        result = result + wp.cw_mul(base_color, wp.static(rc.headlight_ambient))
+      elif wp.static(m.nlight == 0):
+        result = result + base_color * 0.3
+      if wp.static(rc.enable_per_light_ambient):
+        for la in range(wp.static(m.nlight)):
+          if light_active[worldid % light_active.shape[0], la]:
+            result = result + wp.cw_mul(base_color, light_ambient[la])
+
+    view_dir = -ray_dir_world
+
+    # Apply Lighting for each light
     for l in range(wp.static(m.nlight)):
-      light_contribution = compute_lighting(
+      cutoff_rad = light_cutoff[l] * wp.static(float(wp.pi) / 180.0)
+      diff_rgb, spec_rgb = compute_lighting(
         geom_type,
         geom_dataid,
         geom_size,
@@ -855,11 +910,71 @@ def render(m: Model, d: Data, rc: RenderContext):
         light_castshadow[worldid % light_castshadow.shape[0], l],
         light_xpos_in[worldid, l],
         light_xdir_in[worldid, l],
+        light_attenuation[l],
+        cutoff_rad,
+        light_exponent[l],
+        light_diffuse[l],
+        light_specular[l],
         normal,
         hit_point,
+        view_dir,
+        mat_spec,
+        mat_shin_exp,
         wp.static(rc.enable_backface_culling),
+        wp.static(rc.enable_specular),
+        wp.static(rc.light_attenuation_is_default),
+        wp.static(rc.has_spot_lights),
       )
-      result = result + base_color * light_contribution
+      result = result + wp.cw_mul(base_color, diff_rgb) + spec_rgb
+
+    # Apply Headlight
+    if wp.static(rc.headlight_active):
+      cam_pos = ray_origin_world
+      cam_fwd = wp.vec3(-cam_mat_world[0, 2], -cam_mat_world[1, 2], -cam_mat_world[2, 2])
+      hl_diff, hl_spec = compute_lighting(
+        geom_type,
+        geom_dataid,
+        geom_size,
+        flex_vertadr,
+        flex_edge,
+        flex_radius,
+        geom_xpos_in,
+        geom_xmat_in,
+        flexvert_xpos_in,
+        use_shadows,
+        bvh_id,
+        group_root[worldid],
+        bvh_ngeom,
+        bvh_nflexgeom,
+        enabled_geom_ids,
+        worldid,
+        mesh_bvh_id,
+        hfield_bvh_id,
+        flex_geom_flexid,
+        flex_geom_edgeid,
+        flex_bvh_id,
+        flex_group_root,
+        True,
+        1,
+        False,
+        cam_pos,
+        cam_fwd,
+        wp.vec3(1.0, 0.0, 0.0),
+        0.0,
+        0.0,
+        wp.static(rc.headlight_diffuse),
+        wp.static(rc.headlight_specular),
+        normal,
+        hit_point,
+        view_dir,
+        mat_spec,
+        mat_shin_exp,
+        wp.static(rc.enable_backface_culling),
+        wp.static(rc.enable_specular),
+        True,
+        False,
+      )
+      result = result + wp.cw_mul(base_color, hl_diff) + hl_spec
 
     hit_color = wp.min(result, wp.vec3(1.0, 1.0, 1.0))
     hit_color = wp.max(hit_color, wp.vec3(0.0, 0.0, 0.0))
@@ -887,12 +1002,21 @@ def render(m: Model, d: Data, rc: RenderContext):
       m.light_type,
       m.light_castshadow,
       m.light_active,
+      m.light_attenuation,
+      m.light_cutoff,
+      m.light_exponent,
+      m.light_ambient,
+      m.light_diffuse,
+      m.light_specular,
       m.flex_vertadr,
       m.flex_edge,
       m.flex_radius,
       m.mesh_faceadr,
       m.mat_texid,
       m.mat_texrepeat,
+      m.mat_emission,
+      m.mat_specular,
+      m.mat_shininess,
       m.mat_rgba,
       d.geom_xpos,
       d.geom_xmat,

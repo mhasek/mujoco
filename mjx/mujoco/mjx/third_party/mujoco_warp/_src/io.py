@@ -2778,6 +2778,10 @@ def create_render_context(
   use_precomputed_rays: bool = True,
   render_skybox: bool = False,
   enable_backface_culling: bool = True,
+  headlight_active: bool = True,
+  enable_specular: bool = True,
+  enable_emission: bool = True,
+  enable_per_light_ambient: bool = True,
 ) -> types.RenderContext:
   """Creates a render context on device.
 
@@ -2792,8 +2796,9 @@ def create_render_context(
       If None, uses the MuJoCo model values.
     use_textures: Whether to use textures.
     use_shadows: Whether to use shadows.
-    use_ambient_lighting: Whether to add the renderer's hemispheric ambient
-      lighting term before applying model lights.
+    use_ambient_lighting: Top-level ambient switch. When False, skips all
+                          ambient contributions, including headlight ambient,
+                          the no-light fallback, and per-light ambient.
     enabled_geom_groups: The geom groups to render.
     cam_active: List of booleans indicating which cameras to include in rendering.
                 If None, all cameras are included.
@@ -2806,6 +2811,22 @@ def create_render_context(
                              the ray (ray origin inside the geom). Matches MuJoCo's
                              mesh-ray rule. Default True. Disable for a small
                              performance gain when no camera is ever inside a geom.
+    headlight_active: Inject `vis.headlight` as a synthetic directional light at
+                      the active camera. When False the kernel skips the entire
+                      headlight branch at compile time. Disable for performance
+                      when no headlight is present.
+    enable_specular: Evaluate Phong specular highlights per light. When False the
+                     half-vector normalize and shininess `pow` are dropped at
+                     compile time. Disable for performance when no specular is present.
+    enable_emission: Add `mat_emission * base_color` per shaded pixel. When
+                     False the term is dropped at compile time. Disable for performance
+                     when no emission is present.
+    enable_per_light_ambient: When ambient lighting is enabled, sum each
+                              light's XML `ambient` color into shaded pixels
+                              even outside its cone or in shadow. When False
+                              the per-light ambient pass is removed at compile
+                              time. Disable for performance when model lights
+                              do not use ambient colors.
 
   Returns:
     The render context containing rendering fields and output arrays on device.
@@ -2986,6 +3007,19 @@ def create_render_context(
 
   bvh_ngeom = len(geom_enabled_idx)
 
+  headlight_on = bool(mjm.vis.headlight.active) and headlight_active
+  hl_ambient = np.asarray(mjm.vis.headlight.ambient, dtype=np.float32)
+  hl_diffuse = np.asarray(mjm.vis.headlight.diffuse, dtype=np.float32)
+  hl_specular = np.asarray(mjm.vis.headlight.specular, dtype=np.float32)
+
+  if mjm.nlight == 0:
+    light_attenuation_is_default = True
+    has_spot_lights = False
+  else:
+    atten = np.asarray(mjm.light_attenuation, dtype=np.float32).reshape(-1, 3)
+    light_attenuation_is_default = bool(np.allclose(atten, np.array([1.0, 0.0, 0.0], dtype=np.float32)))
+    has_spot_lights = bool((np.asarray(mjm.light_type) == int(mujoco.mjtLightType.mjLIGHT_SPOT)).any())
+
   rc = types.RenderContext(
     nrender=ncam,
     cam_res=cam_res_arr,
@@ -2998,6 +3032,10 @@ def create_render_context(
     render_skybox=render_skybox,
     skybox_tex_id=skybox_tex_id,
     skybox_face_width=skybox_face_width,
+    headlight_active=headlight_on,
+    headlight_ambient=wp.vec3(float(hl_ambient[0]), float(hl_ambient[1]), float(hl_ambient[2])),
+    headlight_diffuse=wp.vec3(float(hl_diffuse[0]), float(hl_diffuse[1]), float(hl_diffuse[2])),
+    headlight_specular=wp.vec3(float(hl_specular[0]), float(hl_specular[1]), float(hl_specular[2])),
     bvh_ngeom=bvh_ngeom,
     enabled_geom_ids=wp.array(geom_enabled_idx, dtype=int),
     mesh_registry=mesh_registry,
@@ -3039,6 +3077,11 @@ def create_render_context(
     znear=znear,
     total_rays=int(total),
     enable_backface_culling=enable_backface_culling,
+    enable_specular=enable_specular,
+    enable_emission=enable_emission,
+    enable_per_light_ambient=enable_per_light_ambient,
+    light_attenuation_is_default=light_attenuation_is_default,
+    has_spot_lights=has_spot_lights,
   )
 
   bvh.build_scene_bvh(mjm, mjd, rc, nworld)

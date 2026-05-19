@@ -202,9 +202,21 @@ class ModelWarp(PyTreeNode):
   jnt_limited_ball_adr: np.ndarray
   jnt_limited_slide_hinge_adr: np.ndarray
   light_active: jax.Array
+  light_ambient: np.ndarray
+  light_attenuation: np.ndarray
   light_bodyid: np.ndarray
+  light_bulbradius: np.ndarray
+  light_diffuse: np.ndarray
+  light_exponent: np.ndarray
+  light_intensity: np.ndarray
+  light_range: np.ndarray
+  light_specular: np.ndarray
   light_targetbodyid: np.ndarray
   mapM2M: np.ndarray
+  mat_emission: np.ndarray
+  mat_reflectance: np.ndarray
+  mat_shininess: np.ndarray
+  mat_specular: np.ndarray
   mat_texrepeat: jax.Array
   max_ten_J_rownnz: int
   mesh_polyadr: np.ndarray
@@ -762,18 +774,31 @@ _NDIM = {
         'jnt_stiffnesspoly': 3,
         'jnt_type': 1,
         'light_active': 2,
+        'light_ambient': 2,
+        'light_attenuation': 2,
         'light_bodyid': 1,
+        'light_bulbradius': 1,
         'light_castshadow': 2,
+        'light_cutoff': 1,
+        'light_diffuse': 2,
         'light_dir': 3,
         'light_dir0': 3,
+        'light_exponent': 1,
+        'light_intensity': 1,
         'light_mode': 1,
         'light_pos': 3,
         'light_pos0': 3,
         'light_poscom0': 3,
+        'light_range': 1,
+        'light_specular': 2,
         'light_targetbodyid': 1,
         'light_type': 2,
         'mapM2M': 1,
+        'mat_emission': 1,
+        'mat_reflectance': 1,
         'mat_rgba': 3,
+        'mat_shininess': 1,
+        'mat_specular': 1,
         'mat_texid': 3,
         'mat_texrepeat': 3,
         'max_ten_J_rownnz': 0,
@@ -1348,18 +1373,31 @@ _BATCH_DIM = {
         'jnt_stiffnesspoly': True,
         'jnt_type': False,
         'light_active': True,
+        'light_ambient': False,
+        'light_attenuation': False,
         'light_bodyid': False,
+        'light_bulbradius': False,
         'light_castshadow': True,
+        'light_cutoff': False,
+        'light_diffuse': False,
         'light_dir': True,
         'light_dir0': True,
+        'light_exponent': False,
+        'light_intensity': False,
         'light_mode': False,
         'light_pos': True,
         'light_pos0': True,
         'light_poscom0': True,
+        'light_range': False,
+        'light_specular': False,
         'light_targetbodyid': False,
         'light_type': True,
         'mapM2M': False,
+        'mat_emission': False,
+        'mat_reflectance': False,
         'mat_rgba': True,
+        'mat_shininess': False,
+        'mat_specular': False,
         'mat_texid': True,
         'mat_texrepeat': True,
         'max_ten_J_rownnz': False,
