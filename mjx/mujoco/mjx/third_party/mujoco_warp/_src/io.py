@@ -2774,6 +2774,7 @@ def create_render_context(
   use_ambient_lighting: bool = True,
   enabled_geom_groups: list[int] = [0, 1, 2],
   cam_active: list[bool] | None = None,
+  background_color: tuple[float, float, float, float] = (0.1, 0.1, 0.2, 1.0),
   flex_render_smooth: bool = True,
   use_precomputed_rays: bool = True,
   render_skybox: bool = False,
@@ -2811,6 +2812,7 @@ def create_render_context(
                              the ray (ray origin inside the geom). Matches MuJoCo's
                              mesh-ray rule. Default True. Disable for a small
                              performance gain when no camera is ever inside a geom.
+    background_color: The color to use for background pixels when no skybox is rendered.
     headlight_active: Inject `vis.headlight` as a synthetic directional light at
                       the active camera. When False the kernel skips the entire
                       headlight branch at compile time. Disable for performance
@@ -3027,7 +3029,9 @@ def create_render_context(
     use_textures=use_textures,
     use_shadows=use_shadows,
     use_ambient_lighting=use_ambient_lighting,
-    background_color=render_util.pack_rgba_to_uint32(0.1 * 255.0, 0.1 * 255.0, 0.2 * 255.0, 1.0 * 255.0),
+    background_color=render_util.pack_rgba_to_uint32(
+      background_color[0] * 255.0, background_color[1] * 255.0, background_color[2] * 255.0, background_color[3] * 255.0
+    ),
     use_precomputed_rays=use_precomputed_rays,
     render_skybox=render_skybox,
     skybox_tex_id=skybox_tex_id,
