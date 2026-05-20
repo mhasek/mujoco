@@ -665,9 +665,9 @@ def render(m: Model, d: Data, rc: RenderContext):
     mesh_faceadr: wp.array[int],
     mat_texid: wp.array3d[int],
     mat_texrepeat: wp.array2d[wp.vec2],
-    mat_emission: wp.array[float],
-    mat_specular: wp.array[float],
-    mat_shininess: wp.array[float],
+    mat_emission: wp.array2d[float],
+    mat_specular: wp.array2d[float],
+    mat_shininess: wp.array2d[float],
     mat_rgba: wp.array2d[wp.vec4],
     # Data in:
     geom_xpos_in: wp.array2d[wp.vec3],
@@ -860,10 +860,10 @@ def render(m: Model, d: Data, rc: RenderContext):
         mat_id_for_spec = geom_matid[worldid % geom_matid.shape[0], geom_id]
         if mat_id_for_spec >= 0:
           if wp.static(rc.enable_specular):
-            mat_spec = mat_specular[mat_id_for_spec]
-            mat_shin_exp = mat_shininess[mat_id_for_spec] * 128.0
+            mat_spec = mat_specular[worldid % mat_specular.shape[0], mat_id_for_spec]
+            mat_shin_exp = mat_shininess[worldid % mat_shininess.shape[0], mat_id_for_spec] * 128.0
           if wp.static(rc.enable_emission):
-            mat_emis = mat_emission[mat_id_for_spec]
+            mat_emis = mat_emission[worldid % mat_emission.shape[0], mat_id_for_spec]
 
     result = wp.vec3(0.0, 0.0, 0.0)
     if wp.static(rc.enable_emission):
