@@ -2724,11 +2724,18 @@ def create_render_context(
   render_seg: list[bool] | bool | None = None,
   use_textures: bool = True,
   use_shadows: bool = False,
+  use_ambient_lighting: bool = True,
   enabled_geom_groups: list[int] = [0, 1, 2],
   cam_active: list[bool] | None = None,
+  background_color: tuple[float, float, float, float] = (0.1, 0.1, 0.2, 1.0),
   flex_render_smooth: bool = True,
   use_precomputed_rays: bool = True,
   render_skybox: bool = False,
+  enable_backface_culling: bool = True,
+  headlight_active: bool = True,
+  enable_specular: bool = True,
+  enable_emission: bool = True,
+  enable_per_light_ambient: bool = True,
 ) -> types.RenderContext:
   """Creates a render context on device.
 
@@ -2743,14 +2750,38 @@ def create_render_context(
       If None, uses the MuJoCo model values.
     use_textures: Whether to use textures.
     use_shadows: Whether to use shadows.
+    use_ambient_lighting: Top-level ambient switch. When False, skips all
+                          ambient contributions, including headlight ambient,
+                          the no-light fallback, and per-light ambient.
     enabled_geom_groups: The geom groups to render.
     cam_active: List of booleans indicating which cameras to include in rendering.
                 If None, all cameras are included.
+    background_color: The color to use for background pixels when no skybox is rendered.
     flex_render_smooth: Whether to render flex meshes smoothly.
     use_precomputed_rays: Use precomputed rays instead of computing during rendering.
                           When using domain randomization for camera intrinsics, set to False.
     render_skybox: Whether to shade missed rays with the MuJoCo skybox texture.
                    Requires the model to contain a texture with type `mjTEXTURE_SKYBOX`.
+    enable_backface_culling: Drop primitive ray hits whose normal faces away from
+                             the ray (ray origin inside the geom). Matches MuJoCo's
+                             mesh-ray rule. Default True. Disable for a small
+                             performance gain when no camera is ever inside a geom.
+    headlight_active: Inject `vis.headlight` as a synthetic directional light at
+                      the active camera. When False the kernel skips the entire
+                      headlight branch at compile time. Disable for performance
+                      when no headlight is present.
+    enable_specular: Evaluate specular highlights per light. When False the
+                     half-vector normalize and shininess `pow` are dropped at
+                     compile time. Disable for performance when no specular is present.
+    enable_emission: Add `mat_emission * base_color` per shaded pixel. When
+                     False the term is dropped at compile time. Disable for performance
+                     when no emission is present.
+    enable_per_light_ambient: When ambient lighting is enabled, sum each
+                              light's XML `ambient` color into shaded pixels
+                              even outside its cone or in shadow. When False
+                              the per-light ambient pass is removed at compile
+                              time. Disable for performance when model lights
+                              do not use ambient colors.
 
   Returns:
     The render context containing rendering fields and output arrays on device.
@@ -2931,17 +2962,37 @@ def create_render_context(
 
   bvh_ngeom = len(geom_enabled_idx)
 
+  headlight_on = bool(mjm.vis.headlight.active) and headlight_active
+  hl_ambient = np.asarray(mjm.vis.headlight.ambient, dtype=np.float32)
+  hl_diffuse = np.asarray(mjm.vis.headlight.diffuse, dtype=np.float32)
+  hl_specular = np.asarray(mjm.vis.headlight.specular, dtype=np.float32)
+
+  if mjm.nlight == 0:
+    light_attenuation_is_default = True
+    has_spot_lights = False
+  else:
+    atten = np.asarray(mjm.light_attenuation, dtype=np.float32).reshape(-1, 3)
+    light_attenuation_is_default = bool(np.allclose(atten, np.array([1.0, 0.0, 0.0], dtype=np.float32)))
+    has_spot_lights = bool((np.asarray(mjm.light_type) == int(mujoco.mjtLightType.mjLIGHT_SPOT)).any())
+
   rc = types.RenderContext(
     nrender=ncam,
     cam_res=cam_res_arr,
     cam_id_map=wp.array(active_cam_indices, dtype=int),
     use_textures=use_textures,
     use_shadows=use_shadows,
-    background_color=render_util.pack_rgba_to_uint32(0.1 * 255.0, 0.1 * 255.0, 0.2 * 255.0, 1.0 * 255.0),
+    use_ambient_lighting=use_ambient_lighting,
+    background_color=render_util.pack_rgba_to_uint32(
+      background_color[0] * 255.0, background_color[1] * 255.0, background_color[2] * 255.0, background_color[3] * 255.0
+    ),
     use_precomputed_rays=use_precomputed_rays,
     render_skybox=render_skybox,
     skybox_tex_id=skybox_tex_id,
     skybox_face_width=skybox_face_width,
+    headlight_active=headlight_on,
+    headlight_ambient=wp.vec3(float(hl_ambient[0]), float(hl_ambient[1]), float(hl_ambient[2])),
+    headlight_diffuse=wp.vec3(float(hl_diffuse[0]), float(hl_diffuse[1]), float(hl_diffuse[2])),
+    headlight_specular=wp.vec3(float(hl_specular[0]), float(hl_specular[1]), float(hl_specular[2])),
     bvh_ngeom=bvh_ngeom,
     enabled_geom_ids=wp.array(geom_enabled_idx, dtype=int),
     mesh_registry=mesh_registry,
@@ -2982,6 +3033,12 @@ def create_render_context(
     render_seg=wp.array(render_seg, dtype=bool),
     znear=znear,
     total_rays=int(total),
+    enable_backface_culling=enable_backface_culling,
+    enable_specular=enable_specular,
+    enable_emission=enable_emission,
+    enable_per_light_ambient=enable_per_light_ambient,
+    light_attenuation_is_default=light_attenuation_is_default,
+    has_spot_lights=has_spot_lights,
   )
 
   bvh.build_scene_bvh(mjm, mjd, rc, nworld)
