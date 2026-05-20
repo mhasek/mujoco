@@ -78,6 +78,25 @@ class BlockDim:
   """Block dimension 'block_dim' settings for wp.launch_tiled.
 
   TODO(team): experimental and may be removed
+
+  Attributes:
+    segmented_sort: segmented sort block dimension (collision_driver)
+    euler_dense: Euler dense block dimension (forward)
+    actuator_velocity: actuator velocity block dimension (forward)
+    ray: ray block dimension (ray)
+    contact_sort: contact sort block dimension (sensor)
+    energy_vel_kinetic: energy velocity kinetic block dimension (sensor)
+    cholesky_factorize: Cholesky factorize block dimension (smooth)
+    cholesky_solve: Cholesky solve block dimension (smooth)
+    cholesky_factorize_solve: Cholesky factorize and solve block dimension (smooth)
+    solve_LD_sparse_fused: solve LD sparse fused block dimension (smooth)
+    update_gradient_cholesky: update gradient Cholesky block dimension (solver)
+    update_gradient_cholesky_blocked: update gradient Cholesky blocked block dimension (solver)
+    update_gradient_JTDAJ_sparse: update gradient JTDAJ sparse block dimension (solver)
+    update_gradient_JTDAJ_dense: update gradient JTDAJ dense block dimension (solver)
+    linesearch_iterative: linesearch iterative block dimension (solver)
+    contact_jac_tiled: contact Jacobian tiled block dimension (solver)
+    qderiv_actuator_dense: qderiv actuator dense block dimension (derivative)
   """
 
   actuator_velocity: int
@@ -136,8 +155,18 @@ class ModelWarp(PyTreeNode):
   """Derived fields from Model."""
 
   M_colind: np.ndarray
+  M_elemid: np.ndarray
+  M_fullm_i: np.ndarray
+  M_fullm_j: np.ndarray
+  M_fullm_upper_elemid: np.ndarray
+  M_fullm_upper_i: np.ndarray
+  M_fullm_upper_j: np.ndarray
+  M_mulm_col: np.ndarray
+  M_mulm_madr: np.ndarray
+  M_mulm_rowadr: np.ndarray
   M_rowadr: np.ndarray
   M_rownnz: np.ndarray
+  M_tiles: Tuple[TileSet, ...]
   actuator_trntype_body_adr: np.ndarray
   block_dim: BlockDim
   body_branch_start: np.ndarray
@@ -202,15 +231,12 @@ class ModelWarp(PyTreeNode):
   jnt_limited_ball_adr: np.ndarray
   jnt_limited_slide_hinge_adr: np.ndarray
   light_active: jax.Array
-  light_ambient: np.ndarray
-  light_attenuation: np.ndarray
+  light_ambient: jax.Array
+  light_attenuation: jax.Array
   light_bodyid: np.ndarray
-  light_bulbradius: np.ndarray
-  light_diffuse: np.ndarray
-  light_exponent: np.ndarray
-  light_intensity: np.ndarray
-  light_range: np.ndarray
-  light_specular: np.ndarray
+  light_diffuse: jax.Array
+  light_exponent: jax.Array
+  light_specular: jax.Array
   light_targetbodyid: np.ndarray
   mapM2M: np.ndarray
   mat_emission: np.ndarray
@@ -266,13 +292,6 @@ class ModelWarp(PyTreeNode):
   qLD_all_updates: np.ndarray
   qLD_level_offsets: np.ndarray
   qLD_updates: Tuple[np.ndarray, ...]
-  qM_fullm_elemid: np.ndarray
-  qM_fullm_i: np.ndarray
-  qM_fullm_j: np.ndarray
-  qM_mulm_col: np.ndarray
-  qM_mulm_madr: np.ndarray
-  qM_mulm_rowadr: np.ndarray
-  qM_tiles: Tuple[TileSet, ...]
   rangefinder_sensor_adr: np.ndarray
   sensor_acc_adr: np.ndarray
   sensor_adr_to_contact_adr: np.ndarray
@@ -315,6 +334,7 @@ class ModelWarp(PyTreeNode):
 class DataWarp(PyTreeNode):
   """Derived fields from Data."""
 
+  M: jax.Array
   actuator_moment: jax.Array
   actuator_velocity: jax.Array
   cacc: jax.Array
@@ -379,7 +399,6 @@ class DataWarp(PyTreeNode):
   nworld: int
   qLD: jax.Array
   qLDiagInv: jax.Array
-  qM: jax.Array
   qfrc_damper: jax.Array
   qfrc_spring: jax.Array
   solver_niter: jax.Array
@@ -449,6 +468,7 @@ batching.register_vmappable(DataWarp, int, int, _to_elt, _from_elt, None)
 
 _NDIM = {
     'Data': {
+        'M': 3,
         'act': 2,
         'act_dot': 2,
         'actuator_force': 2,
@@ -528,7 +548,6 @@ _NDIM = {
         'nworld': 0,
         'qLD': 3,
         'qLDiagInv': 2,
-        'qM': 3,
         'qacc': 2,
         'qacc_smooth': 2,
         'qacc_warmstart': 2,
@@ -572,8 +591,18 @@ _NDIM = {
     },
     'Model': {
         'M_colind': 1,
+        'M_elemid': 2,
+        'M_fullm_i': 1,
+        'M_fullm_j': 1,
+        'M_fullm_upper_elemid': 1,
+        'M_fullm_upper_i': 1,
+        'M_fullm_upper_j': 1,
+        'M_mulm_col': 1,
+        'M_mulm_madr': 1,
+        'M_mulm_rowadr': 1,
         'M_rowadr': 1,
         'M_rownnz': 1,
+        'M_tiles': -1,
         'actuator_acc0': 2,
         'actuator_actadr': 1,
         'actuator_actearly': 1,
@@ -774,23 +803,20 @@ _NDIM = {
         'jnt_stiffnesspoly': 3,
         'jnt_type': 1,
         'light_active': 2,
-        'light_ambient': 2,
-        'light_attenuation': 2,
+        'light_ambient': 3,
+        'light_attenuation': 3,
         'light_bodyid': 1,
-        'light_bulbradius': 1,
         'light_castshadow': 2,
-        'light_cutoff': 1,
-        'light_diffuse': 2,
+        'light_cutoff': 2,
+        'light_diffuse': 3,
         'light_dir': 3,
         'light_dir0': 3,
-        'light_exponent': 1,
-        'light_intensity': 1,
+        'light_exponent': 2,
         'light_mode': 1,
         'light_pos': 3,
         'light_pos0': 3,
         'light_poscom0': 3,
-        'light_range': 1,
-        'light_specular': 2,
+        'light_specular': 3,
         'light_targetbodyid': 1,
         'light_type': 2,
         'mapM2M': 1,
@@ -931,13 +957,6 @@ _NDIM = {
         'qLD_all_updates': 2,
         'qLD_level_offsets': 1,
         'qLD_updates': -1,
-        'qM_fullm_elemid': 2,
-        'qM_fullm_i': 1,
-        'qM_fullm_j': 1,
-        'qM_mulm_col': 1,
-        'qM_mulm_madr': 1,
-        'qM_mulm_rowadr': 1,
-        'qM_tiles': -1,
         'qpos0': 2,
         'qpos_spring': 2,
         'rangefinder_sensor_adr': 1,
@@ -1048,6 +1067,7 @@ _NDIM = {
 }
 _BATCH_DIM = {
     'Data': {
+        'M': True,
         'act': True,
         'act_dot': True,
         'actuator_force': True,
@@ -1127,7 +1147,6 @@ _BATCH_DIM = {
         'nworld': False,
         'qLD': True,
         'qLDiagInv': True,
-        'qM': True,
         'qacc': True,
         'qacc_smooth': True,
         'qacc_warmstart': True,
@@ -1171,8 +1190,18 @@ _BATCH_DIM = {
     },
     'Model': {
         'M_colind': False,
+        'M_elemid': False,
+        'M_fullm_i': False,
+        'M_fullm_j': False,
+        'M_fullm_upper_elemid': False,
+        'M_fullm_upper_i': False,
+        'M_fullm_upper_j': False,
+        'M_mulm_col': False,
+        'M_mulm_madr': False,
+        'M_mulm_rowadr': False,
         'M_rowadr': False,
         'M_rownnz': False,
+        'M_tiles': False,
         'actuator_acc0': True,
         'actuator_actadr': False,
         'actuator_actearly': False,
@@ -1373,23 +1402,20 @@ _BATCH_DIM = {
         'jnt_stiffnesspoly': True,
         'jnt_type': False,
         'light_active': True,
-        'light_ambient': False,
-        'light_attenuation': False,
+        'light_ambient': True,
+        'light_attenuation': True,
         'light_bodyid': False,
-        'light_bulbradius': False,
         'light_castshadow': True,
-        'light_cutoff': False,
-        'light_diffuse': False,
+        'light_cutoff': True,
+        'light_diffuse': True,
         'light_dir': True,
         'light_dir0': True,
-        'light_exponent': False,
-        'light_intensity': False,
+        'light_exponent': True,
         'light_mode': False,
         'light_pos': True,
         'light_pos0': True,
         'light_poscom0': True,
-        'light_range': False,
-        'light_specular': False,
+        'light_specular': True,
         'light_targetbodyid': False,
         'light_type': True,
         'mapM2M': False,
@@ -1530,13 +1556,6 @@ _BATCH_DIM = {
         'qLD_all_updates': False,
         'qLD_level_offsets': False,
         'qLD_updates': False,
-        'qM_fullm_elemid': False,
-        'qM_fullm_i': False,
-        'qM_fullm_j': False,
-        'qM_mulm_col': False,
-        'qM_mulm_madr': False,
-        'qM_mulm_rowadr': False,
-        'qM_tiles': False,
         'qpos0': True,
         'qpos_spring': True,
         'rangefinder_sensor_adr': False,

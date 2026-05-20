@@ -47,6 +47,25 @@ class BlockDim:
   """Block dimension 'block_dim' settings for wp.launch_tiled.
 
   TODO(team): experimental and may be removed
+
+  Attributes:
+    segmented_sort: segmented sort block dimension (collision_driver)
+    euler_dense: Euler dense block dimension (forward)
+    actuator_velocity: actuator velocity block dimension (forward)
+    ray: ray block dimension (ray)
+    contact_sort: contact sort block dimension (sensor)
+    energy_vel_kinetic: energy velocity kinetic block dimension (sensor)
+    cholesky_factorize: Cholesky factorize block dimension (smooth)
+    cholesky_solve: Cholesky solve block dimension (smooth)
+    cholesky_factorize_solve: Cholesky factorize and solve block dimension (smooth)
+    solve_LD_sparse_fused: solve LD sparse fused block dimension (smooth)
+    update_gradient_cholesky: update gradient Cholesky block dimension (solver)
+    update_gradient_cholesky_blocked: update gradient Cholesky blocked block dimension (solver)
+    update_gradient_JTDAJ_sparse: update gradient JTDAJ sparse block dimension (solver)
+    update_gradient_JTDAJ_dense: update gradient JTDAJ dense block dimension (solver)
+    linesearch_iterative: linesearch iterative block dimension (solver)
+    contact_jac_tiled: contact Jacobian tiled block dimension (solver)
+    qderiv_actuator_dense: qderiv actuator dense block dimension (derivative)
   """
 
   # collision_driver
@@ -131,13 +150,8 @@ class ProjectionType(enum.IntEnum):
     ORTHOGRAPHIC: orthographic projection
   """
 
-  # TODO(team): remove after mjwarp depends on mujoco > 3.4.0 in pyproject.toml
-  if hasattr(mujoco, "mjtProjection"):
-    PERSPECTIVE = mujoco.mjtProjection.mjPROJ_PERSPECTIVE
-    ORTHOGRAPHIC = mujoco.mjtProjection.mjPROJ_ORTHOGRAPHIC
-  else:
-    PERSPECTIVE = 0
-    ORTHOGRAPHIC = 1
+  PERSPECTIVE = mujoco.mjtProjection.mjPROJ_PERSPECTIVE
+  ORTHOGRAPHIC = mujoco.mjtProjection.mjPROJ_ORTHOGRAPHIC
 
 
 class Stage(enum.IntEnum):
@@ -188,6 +202,7 @@ class DisableBit(enum.IntFlag):
     EULERDAMP:    implicit damping for Euler integration
     NATIVECCD:    native convex collision detection (ignored in MJWarp)
     ISLAND:       constraint islands
+    MULTICCD:     disable multiple contacts with CCD
   """
 
   CONSTRAINT = mujoco.mjtDisableBit.mjDSBL_CONSTRAINT
@@ -217,7 +232,6 @@ class EnableBit(enum.IntFlag):
   Attributes:
     ENERGY: energy computation
     INVDISCRETE: discrete-time inverse dynamics
-    MULTICCD: multiple contacts with CCD
   """
 
   ENERGY = mujoco.mjtEnableBit.mjENBL_ENERGY
@@ -1004,21 +1018,18 @@ class Model:
     light_targetbodyid: id of targeted body; -1: none        (nlight,)
     light_type: spot, directional, etc. (mjtLightType)       (*, nlight)
     light_castshadow: does light cast shadows                (*, nlight)
-    light_bulbradius: light radius for soft shadows          (nlight,)
-    light_intensity: intensity multiplier (0: use diffuse)   (nlight,)
-    light_range: maximum range (0: unbounded)                (nlight,)
     light_active: is light active                            (*, nlight)
     light_pos: position rel. to body frame                   (*, nlight, 3)
     light_dir: direction rel. to body frame                  (*, nlight, 3)
     light_poscom0: global position rel. to sub-com in qpos0  (*, nlight, 3)
     light_pos0: global position rel. to body in qpos0        (*, nlight, 3)
     light_dir0: global direction in qpos0                    (*, nlight, 3)
-    light_attenuation: OpenGL constant/linear/quadratic      (nlight, 3)
-    light_cutoff: spotlight half-cone angle in degrees       (nlight,)
-    light_exponent: spotlight angular falloff exponent       (nlight,)
-    light_ambient: ambient RGB                               (nlight, 3)
-    light_diffuse: diffuse RGB                               (nlight, 3)
-    light_specular: specular RGB                             (nlight, 3)
+    light_attenuation: OpenGL constant/linear/quadratic      (*, nlight, 3)
+    light_cutoff: spotlight half-cone angle in degrees       (*, nlight)
+    light_exponent: spotlight angular falloff exponent       (*, nlight)
+    light_ambient: ambient RGB                               (*, nlight, 3)
+    light_diffuse: diffuse RGB                               (*, nlight, 3)
+    light_specular: specular RGB                             (*, nlight, 3)
     flex_contype: flex contact type                          (nflex,)
     flex_conaffinity: flex contact affinity                  (nflex,)
     flex_condim: contact dimensionality (1, 3, 4, 6)         (nflex,)
@@ -1169,9 +1180,9 @@ class Model:
     sensor_cutoff: cutoff for real and positive; 0: ignore   (nsensor,)
     plugin: globally registered plugin slot number           (nplugin,)
     plugin_attr: config attributes of geom plugin            (nplugin, _NPLUGINATTR)
-    M_rownnz: number of non-zeros in each row of qM          (nv,)
-    M_rowadr: index of each row in qM                        (nv,)
-    M_colind: column indices of non-zeros in qM              (nM,)
+    M_rownnz: number of non-zeros in each row of M           (nv,)
+    M_rowadr: index of each row in M                         (nv,)
+    M_colind: column indices of non-zeros in M               (nC,)
     mapM2M: index mapping from M (legacy) to M (CSR)         (nC)
     flex_vertflexid: flex id for each flex vertex            (nflexvert,)
 
@@ -1201,8 +1212,8 @@ class Model:
     jnt_limited_slide_hinge_adr: limited/slide/hinge jntadr
     jnt_limited_ball_adr: limited/ball jntadr
     body_isdofancestor: precomputed mask of which DOFs affect each body
-    dof_tri_row: dof lower triangle row (used in solver)
-    dof_tri_col: dof lower triangle col (used in solver)
+    dof_tri_row: dof upper triangle row (used in solver)
+    dof_tri_col: dof upper triangle col (used in solver)
     nxn_geom_pair: collision pair geom ids [-2, ngeom-1]
     nxn_geom_pair_filtered: valid collision pair geom ids
                             [-1, ngeom - 1]
@@ -1257,18 +1268,21 @@ class Model:
     sensor_rangefinder_bodyid: bodyid for rangefinder        (nrangefinder,)
     taxel_vertadr: tactile sensor vertex address             (nsensortaxel,)
     taxel_sensorid: address for tactile sensors
-    qM_tiles: tiling configuration
+    M_tiles: tiling configuration
     qLD_updates: tuple of index triples for sparse factorization
     qLD_all_updates: tuple of all levels concatenated
     qLD_level_offsets: tuple of start offsets for each level
-    qM_fullm_i: sparse mass matrix addressing
-    qM_fullm_j: sparse mass matrix addressing
-    qM_fullm_elemid: (row, col) -> elemid into qM_fullm_i/qM_fullm_j; -1 if not a chain ancestor
+    M_fullm_i: sparse mass matrix addressing
+    M_fullm_j: sparse mass matrix addressing
+    M_elemid: (row, col) -> CSR madr addresses; -1 if not a chain ancestor
+    M_fullm_upper_i: upper-triangle row indices for solver h seeding
+    M_fullm_upper_j: upper-triangle column indices for solver h seeding
+    M_fullm_upper_elemid: source elemid into M_fullm_i/M_fullm_j
     qD_fullm_i: D-structure row indices for RNE derivatives
     qD_fullm_j: D-structure column indices for RNE derivatives
-    qM_mulm_rowadr: sparse matmul row pointers
-    qM_mulm_col: sparse matmul column indices
-    qM_mulm_madr: sparse matmul matrix addresses
+    M_mulm_rowadr: sparse matmul row pointers
+    M_mulm_col: sparse matmul column indices
+    M_mulm_madr: sparse matmul matrix addresses
   """
 
   nq: int
@@ -1424,21 +1438,18 @@ class Model:
   light_targetbodyid: array("nlight", int)
   light_type: array("*", "nlight", int)
   light_castshadow: array("*", "nlight", bool)
-  light_bulbradius: array("nlight", float)
-  light_intensity: array("nlight", float)
-  light_range: array("nlight", float)
   light_active: array("*", "nlight", bool)
   light_pos: array("*", "nlight", wp.vec3)
   light_dir: array("*", "nlight", wp.vec3)
   light_poscom0: array("*", "nlight", wp.vec3)
   light_pos0: array("*", "nlight", wp.vec3)
   light_dir0: array("*", "nlight", wp.vec3)
-  light_attenuation: array("nlight", wp.vec3)
-  light_cutoff: array("nlight", float)
-  light_exponent: array("nlight", float)
-  light_ambient: array("nlight", wp.vec3)
-  light_diffuse: array("nlight", wp.vec3)
-  light_specular: array("nlight", wp.vec3)
+  light_attenuation: array("*", "nlight", wp.vec3)
+  light_cutoff: array("*", "nlight", float)
+  light_exponent: array("*", "nlight", float)
+  light_ambient: array("*", "nlight", wp.vec3)
+  light_diffuse: array("*", "nlight", wp.vec3)
+  light_specular: array("*", "nlight", wp.vec3)
   flex_contype: array("nflex", int)
   flex_conaffinity: array("nflex", int)
   flex_condim: array("nflex", int)
@@ -1666,26 +1677,32 @@ class Model:
   sensor_rangefinder_bodyid: array("nrangefinder", int)
   taxel_vertadr: array("nsensortaxel", int)
   taxel_sensorid: wp.array[int]
-  qM_tiles: tuple[TileSet, ...]
+  M_tiles: tuple[TileSet, ...]
   qLD_updates: tuple[wp.array[wp.vec3i], ...]
   qLD_all_updates: wp.array[wp.vec3i]
   qLD_level_offsets: wp.array[int]
-  qM_fullm_i: wp.array[int]
-  qM_fullm_j: wp.array[int]
-  qM_fullm_elemid: wp.array2d[int]  # (row, col) -> elemid in qM_fullm_i/j; -1 if col is not a chain ancestor of row
+  # TODO(team): Remove M_fullm_i/j and M_elemid by iterating the M CSR layout
+  # directly in the solver/derivative kernels
+  M_fullm_i: wp.array[int]
+  M_fullm_j: wp.array[int]
+  M_elemid: wp.array2d[int]  # (row, col) -> CSR madr address; -1 if col is not a chain ancestor of row
+  M_fullm_upper_i: wp.array[int]
+  M_fullm_upper_j: wp.array[int]
+  M_fullm_upper_elemid: wp.array[int]
   qD_fullm_i: wp.array[int]  # D-structure (full square) row indices for RNE derivatives
   qD_fullm_j: wp.array[int]  # D-structure (full square) column indices for RNE derivatives
   # Gather-based sparse mul_m indices (thread per DOF, no atomics)
-  qM_mulm_rowadr: wp.array[int]  # start address for each row [nv+1]
-  qM_mulm_col: wp.array[int]  # column index to gather from
-  qM_mulm_madr: wp.array[int]  # matrix address to read
+  M_mulm_rowadr: wp.array[int]  # start address for each row [nv+1]
+  M_mulm_col: wp.array[int]  # column index to gather from
+  M_mulm_madr: wp.array[int]  # matrix address to read
 
 
 class ContactType(enum.IntFlag):
   """Type of contact.
 
-  CONSTRAINT: contact for constraint solver.
-  SENSOR: contact for collision sensor (GEOMDIST, GEOMNORMAL, GEOMFROMTO).
+  Attributes:
+    CONSTRAINT: contact for constraint solver
+    SENSOR: contact for collision sensor (GEOMDIST, GEOMNORMAL, GEOMFROMTO)
   """
 
   CONSTRAINT = 1
@@ -1707,6 +1724,8 @@ class Contact:
     solimp: constraint solver impedance                              (naconmax, 5)
     dim: contact space dimensionality: 1, 3, 4 or 6                  (naconmax,)
     geom: geom ids; -1 for flex                                      (naconmax, 2)
+    flex: flex ids; -1 for geom                                      (naconmax, 2)
+    vert: vertex ids for flex/mesh contact                           (naconmax, 2)
     efc_address: address in efc; -1: not included                    (naconmax, nmaxpyramid)
     worldid: world id                                                (naconmax,)
     type: ContactType                                                (naconmax,)
@@ -1745,9 +1764,9 @@ class Constraint:
     J_rowadr: row start address in colind array       (nworld, 0) dense
                                                       (nworld, njmax) sparse
     J_colind: column indices in J                     (nworld, 0, 0) dense
-                                                      (nworld, 1, njmax * nv) sparse
+                                                      (nworld, 1, njmax_nnz) sparse
     J: constraint Jacobian                            (nworld, njmax_pad, nv_pad) dense
-                                                      (nworld, 1, njmax * nv) sparse
+                                                      (nworld, 1, njmax_nnz) sparse
     pos: constraint position (equality, contact)      (nworld, njmax)
     margin: inclusion margin (contact)                (nworld, njmax)
     D: constraint mass                                (nworld, njmax_pad)
@@ -1825,7 +1844,7 @@ class Data:
     cinert: com-based body inertia and mass                     (nworld, nbody, 10)
     flexvert_xpos: cartesian flex vertex positions              (nworld, nflexvert, 3)
     flexedge_J: edge length Jacobian                            (nworld, nJfe)
-    flexedge_length: flex edge lengths                          (nworld, nflexedge, 1)
+    flexedge_length: flex edge lengths                          (nworld, nflexedge)
     ten_wrapadr: start address of tendon's path                 (nworld, ntendon)
     ten_wrapnum: number of wrap points in path                  (nworld, ntendon)
     ten_J: tendon Jacobian                                      (nworld, nJten)
@@ -1838,10 +1857,10 @@ class Data:
     moment_colind: column indices in sparse actuator_moment     (nworld, nJmom)
     actuator_moment: actuator moments                           (nworld, nJmom)
     crb: com-based composite inertia and mass                   (nworld, nbody, 10)
-    qM: total inertia                                           (nworld, nv, nv) if dense
-                                                                (nworld, 1, nM) if sparse
-    qLD: L'*D*L factorization of M                              (nworld, nv, nv) if dense
+    M: total inertia                                            (nworld, nv_pad, nv_pad) if dense
                                                                 (nworld, 1, nC) if sparse
+    qLD: upper Cholesky factorization                           (nworld, nv, nv) if dense
+         L'*D*L factorization of M                              (nworld, 1, nC) if sparse
     qLDiagInv: 1/diag(D)                                        (nworld, nv)
     flexedge_velocity: flex edge velocities                     (nworld, nflexedge)
     ten_velocity: tendon velocities                             (nworld, ntendon)
@@ -1936,7 +1955,7 @@ class Data:
   moment_colind: array("nworld", "nJmom", int)
   actuator_moment: array("nworld", "nJmom", float)
   crb: array("nworld", "nbody", vec10)
-  qM: wp.array3d[float]
+  M: wp.array3d[float]
   qLD: wp.array3d[float]
   qLDiagInv: array("nworld", "nv", float)
   flexedge_velocity: array("nworld", "nflexedge", float)
@@ -2007,7 +2026,10 @@ class RenderContext:
     flex_bvh_id: per-flex BVH ids
     flex_group_root: per-flex group roots (nworld x n_flex_bvh)
     flex_render_smooth: whether to render flex meshes smoothly
-    flex_dim: flex dimension per flex (1D/2D/3D)
+    bvh_nflexgeom: number of flex geometries in the BVH
+    flex_dim_np: flex dimension per flex (1D/2D/3D)
+    flex_geom_flexid: map from flex geom ID to flex ID
+    flex_geom_edgeid: map from flex geom ID to flex edge ID
     bvh: scene BVH
     bvh_id: scene BVH id
     lower: lower bounds

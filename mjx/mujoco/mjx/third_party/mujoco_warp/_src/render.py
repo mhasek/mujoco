@@ -549,6 +549,7 @@ def compute_lighting(
   atten = float(1.0)
 
   if lighttype == 1:  # directional light
+    # MuJoCo guarantees `lightdir` is unit length.
     L = -lightdir
   else:
     L, dist_to_light = math.normalize_with_norm(lightpos - hitpoint)
@@ -608,6 +609,7 @@ def compute_lighting(
     )
 
     if shadow_hit:
+      # was 0.3, but is 0.0 in openGL renderer
       visible = 0.0
 
   weight = atten * visible
@@ -651,12 +653,12 @@ def render(m: Model, d: Data, rc: RenderContext):
     light_type: wp.array2d[int],
     light_castshadow: wp.array2d[bool],
     light_active: wp.array2d[bool],
-    light_attenuation: wp.array[wp.vec3],
-    light_cutoff: wp.array[float],
-    light_exponent: wp.array[float],
-    light_ambient: wp.array[wp.vec3],
-    light_diffuse: wp.array[wp.vec3],
-    light_specular: wp.array[wp.vec3],
+    light_attenuation: wp.array2d[wp.vec3],
+    light_cutoff: wp.array2d[float],
+    light_exponent: wp.array2d[float],
+    light_ambient: wp.array2d[wp.vec3],
+    light_diffuse: wp.array2d[wp.vec3],
+    light_specular: wp.array2d[wp.vec3],
     flex_vertadr: wp.array[int],
     flex_edge: wp.array[wp.vec2i],
     flex_radius: wp.array[float],
@@ -875,13 +877,13 @@ def render(m: Model, d: Data, rc: RenderContext):
       if wp.static(rc.enable_per_light_ambient):
         for la in range(wp.static(m.nlight)):
           if light_active[worldid % light_active.shape[0], la]:
-            result = result + wp.cw_mul(base_color, light_ambient[la])
+            result = result + wp.cw_mul(base_color, light_ambient[worldid % light_ambient.shape[0], la])
 
     view_dir = -ray_dir_world
 
     # Apply Lighting for each light
     for l in range(wp.static(m.nlight)):
-      cutoff_rad = light_cutoff[l] * wp.static(float(wp.pi) / 180.0)
+      cutoff_rad = light_cutoff[worldid % light_cutoff.shape[0], l] * wp.static(float(wp.pi) / 180.0)
       diff_rgb, spec_rgb = compute_lighting(
         geom_type,
         geom_dataid,
@@ -910,11 +912,11 @@ def render(m: Model, d: Data, rc: RenderContext):
         light_castshadow[worldid % light_castshadow.shape[0], l],
         light_xpos_in[worldid, l],
         light_xdir_in[worldid, l],
-        light_attenuation[l],
+        light_attenuation[worldid % light_attenuation.shape[0], l],
         cutoff_rad,
-        light_exponent[l],
-        light_diffuse[l],
-        light_specular[l],
+        light_exponent[worldid % light_exponent.shape[0], l],
+        light_diffuse[worldid % light_diffuse.shape[0], l],
+        light_specular[worldid % light_specular.shape[0], l],
         normal,
         hit_point,
         view_dir,
