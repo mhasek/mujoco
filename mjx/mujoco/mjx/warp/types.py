@@ -230,19 +230,9 @@ class ModelWarp(PyTreeNode):
   is_sparse: bool
   jnt_limited_ball_adr: np.ndarray
   jnt_limited_slide_hinge_adr: np.ndarray
-  light_active: jax.Array
-  light_ambient: jax.Array
-  light_attenuation: jax.Array
   light_bodyid: np.ndarray
-  light_diffuse: jax.Array
-  light_exponent: jax.Array
-  light_specular: jax.Array
   light_targetbodyid: np.ndarray
   mapM2M: np.ndarray
-  mat_emission: np.ndarray
-  mat_reflectance: np.ndarray
-  mat_shininess: np.ndarray
-  mat_specular: np.ndarray
   mat_texrepeat: jax.Array
   max_ten_J_rownnz: int
   mesh_polyadr: np.ndarray
@@ -820,11 +810,10 @@ _NDIM = {
         'light_targetbodyid': 1,
         'light_type': 2,
         'mapM2M': 1,
-        'mat_emission': 1,
-        'mat_reflectance': 1,
+        'mat_emission': 2,
         'mat_rgba': 3,
-        'mat_shininess': 1,
-        'mat_specular': 1,
+        'mat_shininess': 2,
+        'mat_specular': 2,
         'mat_texid': 3,
         'mat_texrepeat': 3,
         'max_ten_J_rownnz': 0,
@@ -1419,11 +1408,10 @@ _BATCH_DIM = {
         'light_targetbodyid': False,
         'light_type': True,
         'mapM2M': False,
-        'mat_emission': False,
-        'mat_reflectance': False,
+        'mat_emission': True,
         'mat_rgba': True,
-        'mat_shininess': False,
-        'mat_specular': False,
+        'mat_shininess': True,
+        'mat_specular': True,
         'mat_texid': True,
         'mat_texrepeat': True,
         'max_ten_J_rownnz': False,
